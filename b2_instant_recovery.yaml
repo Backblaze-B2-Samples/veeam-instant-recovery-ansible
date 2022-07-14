@@ -1,0 +1,143 @@
+- name: Create servers for Instant Recovery
+  hosts: all
+  #strategy: free
+  serial: 10
+  #connection: local
+  gather_facts: no
+  vars_files:
+    #PATH TO PNAP API KEY PAIR FILE
+    - ~/.pnap/config
+  collections:
+    - phoenixnap.bmc
+  tasks:
+    - name: Provisioning server {{ inventory_hostname }} type {{ hostvars[inventory_hostname].type }} os {{ hostvars[inventory_hostname].os }}
+      delegate_to: localhost
+      register: result
+      retries: 1
+      delay: 3
+      until: (not result.failed) or (result.rc is defined and result.rc==0)
+      server:
+        client_id: "{{clientId}}"
+        client_secret: "{{clientSecret}}"
+        hostnames: ["{{inventory_hostname}}"]
+        location: "{{ hostvars[inventory_hostname].location }}"
+        os: "{{ hostvars[inventory_hostname].os }}"
+        type: "{{ hostvars[inventory_hostname].type }}"
+        description: "{{ hostvars[inventory_hostname].description }}"
+        install_default_sshkeys: "{{ hostvars[inventory_hostname].install_default_ssh_keys }}"
+        #ssh_key: "{{ hostvars[inventory_hostname].ssh_key }}"
+        ssh_key_ids: "{{ hostvars[inventory_hostname].ssh_key_ids }}"
+        pricing_model: "{{ hostvars[inventory_hostname].pricing_model }}"
+        network_type: "{{ hostvars[inventory_hostname].network_type }}"
+        rdp_allowed_ips: "{{ hostvars[inventory_hostname].rdp_allowed_ips }}"
+        management_access_allowed_ips: "{{ hostvars[inventory_hostname].management_access_allowed_ips }}"
+
+    - name: Pause for 1 minute to ensure SSH start
+      pause:
+        minutes: 1
+
+- name: Creating Host Groups
+  hosts: localhost
+  strategy: linear
+  gather_facts: no
+  tasks:
+    
+    - name: Create Veeam Group
+      add_host:
+        name: "{{ ((cache | default(hostvars))[item]).result.servers.0.publicIpAddresses.0 }}"
+        group: veeam_install
+        ip: "{{ ((cache | default(hostvars))[item]).result.servers.0.publicIpAddresses.0 }}"
+        privateip: "{{ ((cache | default(hostvars))[item]).result.servers.0.privateIpAddresses.0 }}"
+      when: ((cache | default(hostvars))[item]).group_names.0 == 'veeam_servers'
+      loop: "{{ (cache | default(hostvars)).keys()|list  }}"
+      tags:
+      - groups_create
+    
+    - name: Create ESXi Group
+      add_host:
+        name: "{{ ((cache | default(hostvars))[item]).result.servers.0.publicIpAddresses.0 }}"
+        group: esxi_install
+        ip: "{{ ((cache | default(hostvars))[item]).result.servers.0.publicIpAddresses.0 }}"
+        privateip: "{{ ((cache | default(hostvars))[item]).result.servers.0.privateIpAddresses.0 }}"
+      when: ((cache | default(hostvars))[item]).group_names.0 == 'esxi_servers'
+      loop: "{{ (cache | default(hostvars)).keys()|list  }}"
+      tags:
+      - groups_create
+
+    #Your ROOT AND ADMIN Credentials will be in this file
+    - name: Write HostVARS to YAML
+      delegate_to: localhost
+      copy:
+        content: "{{ hostvars | to_yaml }}"
+        dest: "b2_recovery_inventory.yaml"
+      tags:
+      - groups_create
+
+- name: Veeam Backup & Replication Install
+  hosts: veeam_install
+  remote_user: Admin
+
+  vars:
+      ansible_ssh_extra_args: "-o StrictHostKeyChecking=no"
+      ansible_ssh_private_key_file: "~/.ssh/id_ed25519"
+      ansible_shell_type: cmd
+      ansible_winrm_operation_timeout_sec: 60
+      ansible_winrm_read_timeout_sec: 70
+      b2_access_key: "B2_ACCESS_KEY"
+      b2_secret_key: "B2_SECRET_KEY"
+      b2_region: "B2_REGION_NAME"
+      b2_endpoint: "B2_ENDPOINT_URL"
+      b2_bucket_name: "B2_BUCKET_NAME"
+      b2_backup_folder: "B2_BACKUP_FOLDER"
+  tasks:
+    - include_role:
+        name: veeamhub.veeam.veeam_vas
+        tasks_from: vbr_install
+
+      vars:
+        version: "11"
+        iso_download: true
+        license: true
+        source_license: "VEEAM_LICENSE_KEY_FILE"
+        sql_install_username: "sql_install"
+        sql_install_password: "ChangeM3!"
+        sql_service_username: "svc_sql"
+        sql_service_password: "ChangeM3!"
+        sql_username: "sa"
+        sql_password: "ChangeM3!"
+        # https://docs.ansible.com/ansible/latest/user_guide/playbooks_vault.html#single-encrypted-variable
+      tags: install_veeam
+
+    - name: Get status of Veeam Backup Service
+      ansible.windows.win_service_info:
+        name: VeeamBackupSvc
+      register: veeam_status
+      until: veeam_status.services[0].state == 'started'
+      retries: 10
+      delay: 60
+
+    - name: Run S3 Powershell Scripts
+      win_shell: |
+        Add-VBRAmazonAccount -AccessKey "{{ b2_access_key }}" -SecretKey "{{ b2_secret_key }}" -Description "B2-Credentials"
+        $account = Get-VBRAmazonAccount
+        $connect = Connect-VBRAmazonS3CompatibleService -Account $account -CustomRegionId "{{ b2_region }}" -ServicePoint "{{ b2_endpoint }}"
+        $bucket = Get-VBRAmazonS3Bucket -Connection $connect -Name "{{ b2_bucket_name }}"
+        $folder = Get-VBRAmazonS3Folder -Name "{{ b2_backup_folder }}" -Bucket $bucket -Connection $connect
+        Add-VBRAmazonS3CompatibleRepository -AmazonS3Folder $folder -Connection $connect -Name "B2-Instant-Recovery"
+        # Retrieving repository
+        $repo = Get-VBRObjectStorageRepository -Name "B2-Instant-Recovery"
+        $mount = Mount-VBRObjectStorageRepository -Repository $repo
+        while ($true)
+        {
+          if (Get-VBRBackup | Where-Object { $_.RepositoryId.Guid -eq $mount.Id.Guid })
+          {
+            break
+          }
+          Start-Sleep -Seconds 5
+        }
+        # Retrieving repository object
+        $object = [Veeam.Backup.Core.CArchiveRepository]::Get($repo.id)
+        # Replacing default concurrent task limit
+        $object.Info.Options = $object.Info.Options -replace "<MaxTasksCount>6</MaxTasksCount>"
+        # Updating repository configuration
+        [Veeam.Backup.Core.CArchiveRepository]::Update($object.Info, $repo.SizeLimitEnabled, $repo.SizeLimit, $repo.BackupImmutabilityEnabled, $repo.ImmutabilityPeriod)
