@@ -15,13 +15,13 @@ DOCUMENTATION = '''
 ---
 module: ssh_key
 
-short_description: Create/delete an SSH key on phoenixNAP Bare Metal Cloud.
+short_description: Create/delete SSH key on phoenixNAP Bare Metal Cloud.
 description:
-    - Create/delete an SSH key on phoenixNAP Bare Metal Cloud.
+    - Create/delete SSH key on phoenixNAP Bare Metal Cloud.
     - This module has a dependency on requests
     - API is documented at U(https://developers.phoenixnap.com/docs/bmc/1/overview).
 
-version_added: "0.6.0"
+version_added: "0.5.0"
 
 author:
     - Pavle Jojkic (@pajuga) <pavlej@phoenixnap.com>
@@ -31,17 +31,17 @@ options:
   client_id:
     description: Client ID (Application Management)
     type: str
-    required: true
   client_secret:
     description: Client Secret (Application Management)
     type: str
-    required: true
   default:
     default: false
     description: Keys marked as default are always included on server creation and reset unless toggled off in creation/reset request.
     type: bool
   ssh_key:
-    description: SSH Key actual key value.
+    description:
+      - SSH Key actual key value.
+      - Once a SSH Key is created, it cannot be modified through a playbook
     type: str
   name:
     description: Friendly SSH Key name to represent an SSH key.
@@ -58,7 +58,7 @@ EXAMPLES = '''
 # in location: ~/.pnap/config.yaml
 # and generated SSH key pair in location: ~/.ssh/
 
-# Create an SSH Key
+# Create a SSH Key
 
 - name: Create new SSH Key for account
   hosts: localhost
@@ -76,9 +76,9 @@ EXAMPLES = '''
       ssh_key: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
       state: present
 
-# Delete an SSH Key
+# Delete a SSH Key
 
-- name: Delete an SSH Key
+- name: Delete the SSH Key
   hosts: localhost
   gather_facts: false
   vars_files:
@@ -115,16 +115,17 @@ ssh_key:
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils._text import to_native
-from ansible_collections.phoenixnap.bmc.plugins.module_utils.pnap import set_token_headers, HAS_REQUESTS, requests_wrapper
+from ansible_collections.phoenixnap.bmc.plugins.module_utils.pnap import set_token_headers, HAS_REQUESTS, requests_wrapper, check_immutable_arguments, SSH_API
 
+import os
 import json
 
 ALLOWED_STATES = ["present", "absent"]
-BASE_API = 'https://api.phoenixnap.com/bmc/v1/ssh-keys/'
+IMMUTABLE_ARGUMENTS = {'ssh_key': 'key'}
 
 
 def get_existing_keys(module):
-    response = requests_wrapper(BASE_API, module=module)
+    response = requests_wrapper(SSH_API, module=module)
     return response.json()
 
 
@@ -133,32 +134,39 @@ def ssh_keys_action(module, state):
     changed = False
     existing_keys = get_existing_keys(module)
     new_key_name = module.params['name']
-    target_key = next((key for key in existing_keys if key['name'] == new_key_name), 'missing')
+    target_key = next((key for key in existing_keys if key['name'] == new_key_name), 'absent')
 
     if state == 'present':
-        if target_key == 'missing':
+        if target_key == 'absent':
+            changed = True
             data = json.dumps({
                 'name': new_key_name,
                 'default': module.params['default'],
                 'key': module.params['ssh_key']
             })
-            target_key = requests_wrapper(BASE_API, method='POST', data=data).json()
-            changed = True
+            if not module.check_mode:
+                target_key = requests_wrapper(SSH_API, method='POST', data=data).json()
         else:
+            check_immutable_arguments(IMMUTABLE_ARGUMENTS, target_key, module)
             if target_key['default'] != module.params['default']:
+                changed = True
                 data = json.dumps({
                     'name': target_key['name'],
                     'default': module.params['default']
                 })
-                target_key = requests_wrapper(BASE_API + target_key['id'], method='PUT', data=data).json()
-                changed = True
+                if not module.check_mode:
+                    target_key = requests_wrapper(SSH_API + target_key['id'], method='PUT', data=data).json()
 
-    if state == 'absent' and target_key != 'missing':
+    if state == 'absent' and target_key != 'absent':
+        changed = True
         data = json.dumps({
             'ssh_key_id': target_key['id']
         })
-        target_key = requests_wrapper(BASE_API + target_key['id'], method='DELETE', data=data).json()
-        changed = True
+        if not module.check_mode:
+            target_key = requests_wrapper(SSH_API + target_key['id'], method='DELETE', data=data).json()
+
+    if target_key == 'absent':
+        target_key = 'The SSH Key [%s]' % new_key_name + ' is absent'
 
     return{
         'changed': changed,
@@ -169,18 +177,24 @@ def ssh_keys_action(module, state):
 def main():
     module = AnsibleModule(
         argument_spec=dict(
-            client_id=dict(required=True),
-            client_secret=dict(required=True, no_log=True),
+            client_id=dict(default=os.environ.get('BMC_CLIENT_ID'), no_log=True),
+            client_secret=dict(default=os.environ.get('BMC_CLIENT_SECRET'), no_log=True),
             name={},
             default=dict(type='bool', default=False),
             ssh_key=dict(no_log=True),
             state=dict(choices=ALLOWED_STATES, default='present')
         ),
-        required_if=[["state", "absent", ["name"]]]
+        required_if=[["state", "absent", ["name"]]],
+        supports_check_mode=True
     )
 
     if not HAS_REQUESTS:
         module.fail_json(msg='requests is required for this module.')
+
+    if not module.params.get('client_id') or not module.params.get('client_secret'):
+        _fail_msg = ("if BMC_CLIENT_ID and BMC_CLIENT_SECRET are not in environment variables, "
+                     "the client_id and client_secret parameters are required")
+        module.fail_json(msg=_fail_msg)
 
     state = module.params['state']
 

@@ -6,7 +6,6 @@ from plugins.modules.server import state_final
 from plugins.modules.server import ALLOWED_STATES
 from plugins.modules.server import ratify_server_list_case_present
 from plugins.modules.server import ratify_server_list_case_rebooted
-from plugins.modules.server import wait_for_status_change_case_absent
 
 
 class TestServerStates(TestCase):
@@ -58,19 +57,13 @@ class TestServerStates(TestCase):
     def test_state_remapping_for_target_state_reset(self):
         self.assertEqual(state_api_remapping('reset'), 'reset')
 
-    def test_wait_for_status_change_case_absent(self):
-        expected_output = [{
-            'id': 'some_server_id',
-            'status': 'Server has been deleted'
-        }]
-        self.assertListEqual(wait_for_status_change_case_absent(['some_server_id']), expected_output)
-
     def test_ratify_server_list_case_present(self):
         expected_output = [{
             'id': 'some_server_id',
-            'status': 'not present'
+            'hostname': 'some_server_id',
+            'status': 'absent'
         }]
-        self.assertListEqual(ratify_server_list_case_present(['some_server_id']), expected_output)
+        self.assertListEqual(ratify_server_list_case_present(['some_server_id'], []), expected_output)
 
     def test_ratify_server_list_case_rebooted(self):
         process_servers_with_not_powered_on_state = [{

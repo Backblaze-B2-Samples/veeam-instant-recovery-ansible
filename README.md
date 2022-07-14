@@ -5,6 +5,18 @@ Veeam Instant Recovery on PhoenixNAP Bare Metal Cloud (BMC)
 <p>
 This repo has been forked from https://github.com/phoenixnap/ansible-collection-pnap and the docs have been updated to address how to recovery instantly using Veeam on PhoenixNAP BMC</p>
 
+<p align="center">
+Ansible collection of modules for interacting with the <a href="https://developers.phoenixnap.com/apis">Bare Metal Cloud API</a>. This collection contains the <i><b>server</b></i> module which allows you to automate <a href="https://phoenixnap.com/bare-metal-cloud">Bare Metal Cloud</a> server provisioning and management.
+</p>
+
+<p align="center">
+  <a href="https://phoenixnap.com/bare-metal-cloud">Bare Metal Cloud</a> •
+  <a href="https://galaxy.ansible.com/phoenixnap/bmc">Ansible Galaxy</a> •
+  <a href="https://developers.phoenixnap.com/">Developers Portal</a> •
+  <a href="http://phoenixnap.com/kb">Knowledge Base</a> •
+  <a href="https://developers.phoenixnap.com/support">Support</a>
+</p>
+
 ## Requirements
 
 - [Bare Metal Cloud](https://bmc.phoenixnap.com) account
@@ -18,10 +30,10 @@ This repo has been forked from https://github.com/phoenixnap/ansible-collection-
 2. Follow the prompts to set up your account.
 3. Use your credentials to [log in to Bare Metal Cloud portal](https://bmc.phoenixnap.com).
 
-:arrow_forward: **Video tutorial:** [How to Create a Bare Metal Cloud Account](https://www.youtube.com/watch?v=RLRQOisEB-k)
+:arrow_forward: **Video tutorial:** [How to Create a Bare Metal Cloud Account in Minutes](https://www.youtube.com/watch?v=hPR60XWOSsQ)
 <br>
 
-:arrow_forward: **Video tutorial:** [Introduction to Bare Metal Cloud](https://www.youtube.com/watch?v=8TLsqgLDMN4)
+:arrow_forward: **Video tutorial:** [How to Deploy a Bare Metal Server in a Minute](https://www.youtube.com/watch?v=BzBBwLxR80o)
 
 ## Installing Ansible
 

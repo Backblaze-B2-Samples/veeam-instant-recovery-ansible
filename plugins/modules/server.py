@@ -31,13 +31,20 @@ options:
   client_id:
     description: Client ID (Application Management)
     type: str
-    required: true
   client_secret:
     description: Client Secret (Application Management)
     type: str
-    required: true
+  delete_ip_blocks:
+    description: When the state is absent, it determines whether the IP blocks assigned to the server should be deleted or not.
+    type: bool
+    default: true
   description:
     description: Description of server.
+    type: str
+  gateway_address:
+    description:
+      - The address of the gateway assigned / to assign to the server.
+      - When used as part of request body, IP address has to be part of private/public network assigned to this server.
     type: str
   location:
     description: Server Location ID. See BMC API for current list - U(https://developers.phoenixnap.com/docs/bmc/1/types/Server).
@@ -46,6 +53,18 @@ options:
     description: Whether or not to install ssh keys marked as default in addition to any ssh keys specified in this request.
     type: bool
     default: true
+  ip_block_configuration_type:
+    description:
+      - Determines the approach for configuring IP blocks for the server being provisioned.
+      - If PURCHASE_NEW is selected, the smallest supported range, depending on the operating system, is allocated to the server.
+      - Default value is "PURCHASE_NEW"
+    type: str
+  ip_block:
+    description:
+      - Used to specify the previously purchased IP blocks to assign to this server upon provisioning.
+      - Used alongside the USER_DEFINED configurationType.
+      - must contain at most 1 item
+    type: str
   hostnames:
     description: Name of server.
     type: list
@@ -65,6 +84,40 @@ options:
     description: Server pricing model.
     default: "HOURLY"
     type: str
+  private_network_configuration_type:
+    description: Determines the approach for configuring IP blocks for the server being provisioned.
+    default: "USE_OR_CREATE_DEFAULT"
+    type: str
+  private_network_gateway_address:
+    description: The address of the gateway assigned / to assign to the server.
+    type: str
+  private_networks:
+    description: The list of private networks this server is member of.
+    type: list
+    elements: dict
+    suboptions:
+      id:
+        type: str
+        description: The network identifier.
+      ips:
+        type: list
+        elements: str
+        description: IPs to configure/configured on the server. Should be null or empty list if DHCP is true.
+      dhcp:
+        type: bool
+        description: Determines whether DHCP is enabled for this server. Should be false if ips is not an empty list.
+  public_networks:
+    description: The list of public networks this server is member of.
+    type: list
+    elements: dict
+    suboptions:
+      id:
+        type: str
+        description: The network identifier.
+      ips:
+        type: list
+        elements: str
+        description: IPs to configure/configured on the server. IPs must be within the network's range.
   rdp_allowed_ips:
     description: List of IPs allowed for RDP access to Windows OS. Supported in single IP, CIDR and range format. When undefined, RDP is disabled.
     type: list
@@ -78,7 +131,8 @@ options:
     elements: str
   ssh_key:
     description: A list of SSH Keys that will be installed on the Linux server.
-    type: str
+    type: list
+    elements: str
   ssh_key_ids:
     description: A list of SSH Key IDs that will be installed on the server in addition to any ssh keys specified in request.
     type: list
@@ -88,6 +142,17 @@ options:
     choices: [absent, present, powered-on, powered-off, rebooted, reset, shutdown]
     default: present
     type: str
+  tags:
+    description: Tags to set to server, if any.
+    type: list
+    elements: dict
+    suboptions:
+      name:
+        type: str
+        description: The name of the tag.
+      value:
+        type: str
+        description: The value of the tag assigned to the resource.
   type:
     description: Server type ID. See BMC API for current list - U(https://developers.phoenixnap.com/docs/bmc/1/types/Server).
     type: str
@@ -98,9 +163,9 @@ EXAMPLES = '''
 # in location: ~/.pnap/config.yaml
 # and generated SSH key pair in location: ~/.ssh/
 
-# Creating server
+# Create server
 
-- name: Create new servers for account
+- name: Create new server for account
   hosts: localhost
   gather_facts: false
   vars_files:
@@ -117,6 +182,42 @@ EXAMPLES = '''
       type: s1.c1.medium
       state: present
       ssh_key: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+    register: output
+  - name: Print the servers information
+    debug:
+      var: output.servers
+
+# Create server | private network example
+
+- name: Create new server | private network example
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - ~/.pnap/config.yaml
+  collections:
+    - phoenixnap.bmc
+  tasks:
+  - phoenixnap.bmc.server:
+        client_id: "{{clientId}}"
+        client_secret: "{{clientSecret}}"
+        hostnames: server-red
+        description: custom description
+        location: PHX
+        os: ubuntu/bionic
+        type: s0.d1.medium
+        private_network_configuration_type: USER_DEFINED
+        private_networks:
+          - id: 60f81608e2f4665962b214db
+            ips: [10.0.0.13 - 10.0.0.17]
+            dhcp: false
+          - id: 60f93142c5c1d6082d31382a
+            ips: [10.0.0.11, 10.0.0.12]
+            dhcp: false
+        state: present
+    register: output
+  - name: Print the servers information
+    debug:
+      var: output.servers
 
 # Power on servers
 
@@ -133,6 +234,10 @@ EXAMPLES = '''
       client_secret: "{{clientSecret}}"
       hostnames: [my-server-red, my-server-blue]
       state: powered-on
+    register: output
+  - name: Print the servers information
+    debug:
+      var: output.servers
 
 # Shutdown servers
 # use server_ids as server identifier
@@ -152,6 +257,10 @@ EXAMPLES = '''
         - e6afba51-7de8-4080-83ab-0f9155706xxx
         - e6afBa51-7dg8-4380-8sab-0f9155705xxx
       state: shutdown
+    register: output
+  - name: Print the servers information
+    debug:
+      var: output.servers
 
 # Reset servers
 - name: reset servers
@@ -168,53 +277,174 @@ EXAMPLES = '''
       hostnames: [my-server-red, my-server-blue]
       ssh_key: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
       state: reset
+    register: output
+  - name: Print the servers information
+    debug:
+      var: output.servers
+
+# For more examples, check out this helpful tutorial:
+# https://phoenixnap.com/kb/how-to-install-phoenixnap-bmc-ansible-module#htoc-bmc-playbook-examples
 '''
 
 RETURN = '''
-changed:
-    description: True if a server was altered in any way (created, modified or removed)
-    type: bool
-    sample: True
-    returned: success
 servers:
-    description: Information about each server that was processed
-    type: list
-    sample: '[{"id": "5e502f94dea4835b112de8f0", "status": "powered-on", "hostname": "my-server-red",
-               "description": "my test server", "os": "ubuntu/bionic", "type": "s1.c1.medium", "location": "PHX",
-               "cpu": "Dual Silver 4110", "cpuCount": 1, "coresPerCpu": 6, "cpuFrequency": 3.8,
-               "ram": "64GB RAM", "storage": "1x 1TB NVMe", privateIpAddresses": ["10.0.0.1"],
-               "publicIpAddresses": ["198.15.65.2", "198.15.65.3", "198.15.65.4", "198.15.65.5", "198.15.65.6"],
-               "reservationId": null, "pricingModel": "HOURLY", "password": null, "networkType": "PUBLIC_AND_PRIVATE"}]'
+    description: The servers information as list
     returned: success
+    type: complex
+    contains:
+      id:
+        description: The unique identifier of the server.
+        returned: always
+        type: str
+        sample: x78sdkjds879sd7cx8
+      status:
+        description: The status of the server.
+        returned: always
+        type: str
+        sample: powered-on
+      hostname:
+        description: Hostname of server.
+        returned: always
+        type: str
+        sample: my-server-1
+      description:
+        description: Description of server.
+        returned: always
+        type: str
+        sample: Server #1 used for computing.
+      os:
+        description: The server's OS ID used when the server was created.
+        returned: always
+        type: str
+        sample: ubuntu/bionic
+      type:
+        description: Server type ID. Cannot be changed once a server is created.
+        returned: always
+        type: str
+        sample: s1.c1.small
+      location:
+        description: Server location ID. Cannot be changed once a server is created.
+        returned: always
+        type: str
+        sample: PHX
+      cpu:
+        description: A description of the machine CPU.
+        returned: always
+        type: str
+        sample: E-2276G
+      cpuCount:
+        description: The number of CPUs available in the system.
+        returned: always
+        type: int
+        sample: 2
+      coresPerCpu:
+        description: The number of physical cores present on each CPU.
+        returned: always
+        type: int
+        sample: 28
+      cpuFrequency:
+        description: The CPU frequency in GHz.
+        returned: always
+        type: float
+        sample: 3.6
+      ram:
+        description: A description of the machine RAM.
+        returned: always
+        type: str
+        sample: 64GB RAM
+      storage:
+        description: A description of the machine storage.
+        returned: always
+        type: str
+        sample: 1x 960GB NVMe
+      privateIpAddresses:
+        description: Private IP addresses assigned to server.
+        returned: always
+        type: list
+        sample: [ "172.16.0.1" ]
+      publicIpAddresses:
+        description: Public IP addresses assigned to server.
+        returned: always
+        type: list
+        sample: [ "182.16.0.1", "183.16.0.1" ]
+      reservationId:
+        description: The reservation reference id if any.
+        returned: always
+        type: str
+        sample: x78sdkjds879sd7cx8
+      pricingModel:
+        description: The pricing model this server is being billed.
+        returned: always
+        type: str
+        sample: HOURLY
+      password:
+        description: Password set for user Admin on Windows server which will only be returned in response to provisioning a server.
+        returned: always
+        type: str
+        sample: MyP@ssw0rd_01
+      networkType:
+        description: The type of network configuration for this server.
+        returned: always
+        type: str
+        sample: PUBLIC_AND_PRIVATE
+      clusterId:
+        description: The cluster reference id if any.
+        returned: always
+        type: str
+        sample: x78sdkjds879sd7cx8
+      tags:
+        description: The tags assigned if any.
+        returned: always
+        type: list
+        contains:
+          id:
+            description: The unique id of the tag.
+            type: str
+            sample: 60ffafcdffb8b074c7968dad
+          name:
+            description: The name of the tag.
+            type: str
+            sample: Environment
+          value:
+            description: The value of the tag assigned to the resource.
+            type: str
+            sample: PROD
+          isBillingTag:
+            description: Whether or not to show the tag as part of billing and invoices
+            type: bool
+            sample: true
 '''
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils._text import to_native
-from ansible_collections.phoenixnap.bmc.plugins.module_utils.pnap import set_token_headers, HAS_REQUESTS, requests_wrapper
+from ansible_collections.phoenixnap.bmc.plugins.module_utils.pnap import set_token_headers, HAS_REQUESTS, requests_wrapper, remove_empty_elements, SERVER_API
 
+import os
 import json
 import time
 
 
 ALLOWED_STATES = ['absent', 'powered-on', 'powered-off', 'present', 'rebooted', 'reset', 'shutdown']
-BASE_API = 'https://api.phoenixnap.com/bmc/v1/servers/'
 CHECK_FOR_STATUS_CHANGE = 5
 TIMEOUT_STATUS_CHANGE = 1800
+present_servers = []
 
 
-def get_target_list(module, target_state):
+def get_target_list(module, target_state, existing_servers):
     if module.params['server_ids']:
         target_list = module.params['server_ids']
     elif target_state == 'present':
         target_list = module.params['hostnames']
     else:
-        target_list = get_servers_id(module, module.params['hostnames'])
-    return target_list
+        target_list = get_servers_id(module.params['hostnames'], existing_servers, target_state)
+    return list(set(target_list))
 
 
 def state_api_remapping(target_state):
     if target_state == 'shutdown':
         state = 'powered-off'
+    elif target_state == 'present':
+        state = ['powered-on', 'powered-off']
     else:
         state = target_state
     return state
@@ -231,18 +461,24 @@ def state_final(target_state):
 
 
 def get_existing_servers(module):
-    response = requests_wrapper(BASE_API, module=module)
+    response = requests_wrapper(SERVER_API, module=module)
     return response.json()
 
 
-def equalize_server_list(module, target_servers):
+def refresh_server_list(module, target_servers):
     existing_servers = get_existing_servers(module)
     return [ex for ex in existing_servers if ex['id'] in target_servers]
 
 
-def ratify_server_list_case_present(target_servers):
+def ratify_server_list_case_present(target_servers, existing_servers):
     process_servers = []
-    [process_servers.append({'id': ts, 'status': 'not present'}) for ts in target_servers]
+    existing_servers_hostname = [es['hostname'] for es in existing_servers]
+    for ts in target_servers:
+        if ts not in existing_servers_hostname:
+            process_servers.append({'id': ts, 'hostname': ts, 'status': 'absent'})
+        else:
+            [present_servers.append(es) for es in existing_servers if es['hostname'] == ts]
+
     return process_servers
 
 
@@ -252,14 +488,14 @@ def ratify_server_list_case_rebooted(process_servers):
             raise Exception('all servers must be in powered-on state')
 
 
-def ratify_server_list(module, target_servers, target_state):
+def ratify_server_list(target_servers, target_state, existing_servers):
     if target_state == 'present':
-        return ratify_server_list_case_present(target_servers)
+        return ratify_server_list_case_present(target_servers, existing_servers)
 
     if len(target_servers) != len(set(target_servers)):
         raise Exception('List of servers can\'t contain duplicate server id')
 
-    process_servers = equalize_server_list(module, target_servers)
+    process_servers = [ex for ex in existing_servers if ex['id'] in target_servers]
     if len(target_servers) > len(process_servers):
         raise Exception('List of servers contain one or more invalid server id')
 
@@ -269,11 +505,18 @@ def ratify_server_list(module, target_servers, target_state):
     return process_servers
 
 
-def get_servers_id(module, server_names):
+def get_servers_id(server_names, existing_servers, target_state):
     if server_names is None:
         raise Exception('Please check provided server list.')
-    existing_servers = get_existing_servers(module)
-    return [s['id'] for s in existing_servers if s['hostname'] in server_names]
+
+    if target_state == 'present':
+        return [es['id'] for es in existing_servers if es['hostname'] in server_names]
+    else:
+        server_ids = []
+        for es in existing_servers:
+            if es['hostname'] in server_names:
+                server_ids.append(es['id'])
+        return server_ids
 
 
 def get_api_params(module, server_id, target_state):
@@ -281,8 +524,10 @@ def get_api_params(module, server_id, target_state):
     data = None
 
     if target_state == 'absent':
-        path = server_id
-        method = 'DELETE'
+        path = '%s/actions/deprovision' % server_id
+        data = {
+            "deleteIpBlocks": module.params['delete_ip_blocks']
+        }
     elif(target_state == 'powered-on'):
         path = '%s/actions/power-on' % server_id
     elif(target_state == 'powered-off'):
@@ -295,7 +540,7 @@ def get_api_params(module, server_id, target_state):
         path = '%s/actions/reset' % server_id
         data = {
             "installDefaultSshKeys": module.params['install_default_sshkeys'],
-            "sshKeys": [module.params['ssh_key']],
+            "sshKeys": module.params['ssh_key'],
             "sshKeyIds": module.params['ssh_key_ids'],
             "osConfiguration": {
                 "windows": {
@@ -308,12 +553,13 @@ def get_api_params(module, server_id, target_state):
         }
     elif(target_state == 'present'):
         path = ''
+        gateway_address = module.params['gateway_address'] or module.params['private_network_gateway_address']
         data = {
             "description": module.params['description'],
             "location": module.params['location'],
             "hostname": server_id,
             "installDefaultSshKeys": module.params['install_default_sshkeys'],
-            "sshKeys": [module.params['ssh_key']],
+            "sshKeys": module.params['ssh_key'],
             "sshKeyIds": module.params['ssh_key_ids'],
             "networkType": module.params['network_type'],
             "os": module.params['os'],
@@ -325,41 +571,40 @@ def get_api_params(module, server_id, target_state):
                     "rdpAllowedIps": module.params['rdp_allowed_ips']
                 },
                 "managementAccessAllowedIps": module.params['management_access_allowed_ips']
-            }
+            },
+            "networkConfiguration": {
+                "gatewayAddress": gateway_address,
+                "privateNetworkConfiguration": {
+                    "configurationType": module.params['private_network_configuration_type'],
+                    "privateNetworks": module.params['private_networks']
+                },
+                "ipBlocksConfiguration": {
+                    "configurationType": module.params['ip_block_configuration_type'],
+                    "ipBlocks": [
+                        {
+                            "id": module.params['ip_block']
+                        }
+                    ]
+                },
+                "publicNetworkConfiguration": {
+                    "publicNetworks": module.params['public_networks']
+                }
+            },
+            "tags": module.params['tags']
         }
 
-    data = json.dumps(remove_empty_elements(data))
-    endpoint = BASE_API + path
+    data = json.dumps(remove_empty_elements(data), sort_keys=True)
+    endpoint = SERVER_API + path
     return{'method': method, 'endpoint': endpoint, 'data': data}
 
 
-def remove_empty_elements(d):
-    """recursively remove empty lists, empty dicts, or None elements from a dictionary"""
-
-    def empty(x):
-        return x is None or x == {} or x == []
-
-    if not isinstance(d, (dict, list)):
-        return d
-    elif isinstance(d, list):
-        return [v for v in (remove_empty_elements(v) for v in d) if not empty(v)]
-    else:
-        return {k: v for k, v in ((k, remove_empty_elements(v)) for k, v in d.items()) if not empty(v)}
-
-
-def wait_for_status_change_case_absent(target_list):
-    servers_refreshed = []
-    [servers_refreshed.append({'id': ts, 'status': 'Server has been deleted'}) for ts in target_list]
-    return servers_refreshed
-
-
-def wait_for_status_change(module, target_list, target_state):
+def wait_for_status_change(module, target_list, target_state, first_response):
     if target_state == 'absent':
-        return wait_for_status_change_case_absent(target_list)
+        return first_response
 
     timeout = time.time() + TIMEOUT_STATUS_CHANGE
     while timeout > time.time():
-        servers_refreshed = equalize_server_list(module, target_list)
+        servers_refreshed = refresh_server_list(module, target_list)
         if all(sr['status'] == state_final(target_state) for sr in servers_refreshed):
             return servers_refreshed
         time.sleep(CHECK_FOR_STATUS_CHANGE)
@@ -375,23 +620,31 @@ def prepare_result_present(process_servers, target_state):
 def servers_action(module, target_state):
     changed = False
     set_token_headers(module)
-    target_list = get_target_list(module, target_state)
-    process_servers = ratify_server_list(module, target_list, target_state)
+    existing_servers = get_existing_servers(module)
+    target_list = get_target_list(module, target_state, existing_servers)
+    process_servers = ratify_server_list(target_list, target_state, existing_servers)
 
     first_response = []
     for ps in process_servers:
-        if ps['status'] != state_api_remapping(target_state):
-            ap = get_api_params(module, ps['id'], target_state)
-            first_response.append(requests_wrapper(ap['endpoint'], ap['method'], data=ap['data'], module=module).json())
+        if ps['status'] not in state_api_remapping(target_state):
             changed = True
+            if not module.check_mode:
+                ap = get_api_params(module, ps['id'], target_state)
+                first_response.append(requests_wrapper(ap['endpoint'], ap['method'], data=ap['data'], module=module).json())
 
     if target_state == 'present':
-        target_list = get_servers_id(module, target_list)
-    if changed:
-        process_servers = wait_for_status_change(module, target_list, target_state)
+        existing_servers = get_existing_servers(module)
+        [target_list.remove(ps['hostname']) for ps in present_servers if ps['hostname'] in target_list]
+        target_list = get_servers_id(target_list, existing_servers, target_state)
 
-    if target_state in ['present', 'reset']:
-        process_servers = prepare_result_present(first_response, target_state)
+    if not module.check_mode:
+        if changed:
+            process_servers = wait_for_status_change(module, target_list, target_state, first_response)
+        if target_state in ['present', 'reset']:
+            process_servers = prepare_result_present(first_response, target_state)
+
+    if target_state == 'present':
+        process_servers += present_servers
 
     return{
         'changed': changed,
@@ -403,30 +656,65 @@ def main():
 
     module = AnsibleModule(
         argument_spec=dict(
-            client_id=dict(required=True),
-            client_secret=dict(required=True, no_log=True),
+            client_id=dict(default=os.environ.get('BMC_CLIENT_ID'), no_log=True),
+            client_secret=dict(default=os.environ.get('BMC_CLIENT_SECRET'), no_log=True),
+            delete_ip_blocks=dict(type='bool', default=True),
             description={},
             location={},
+            gateway_address={},
             hostnames=dict(type='list', elements='str'),
             install_default_sshkeys=dict(type='bool', default=True),
+            ip_block_configuration_type={},
+            ip_block={},
             management_access_allowed_ips=dict(type='list', elements='str'),
             network_type=dict(default='PUBLIC_AND_PRIVATE'),
             os={},
             rdp_allowed_ips=dict(type='list', elements='str'),
             reservation_id={},
             pricing_model=dict(default='HOURLY'),
+            private_network_configuration_type=dict(default='USE_OR_CREATE_DEFAULT'),
+            private_network_gateway_address=dict(removed_in_version='2.0.0', removed_from_collection='phoenixnap.bmc'),
+            private_networks=dict(
+                type='list',
+                elements='dict',
+                options=dict(
+                    id={},
+                    ips=dict(type='list', elements='str'),
+                    dhcp=dict(type='bool')
+                )),
+            public_networks=dict(
+                type='list',
+                elements='dict',
+                options=dict(
+                    id={},
+                    ips=dict(type='list', elements='str')
+                )),
             server_ids=dict(type='list', elements='str'),
-            ssh_key=dict(no_log=True),
+            ssh_key=dict(type='list', elements='str', no_log=True),
             ssh_key_ids=dict(type='list', elements='str', no_log=True),
             state=dict(choices=ALLOWED_STATES, default='present'),
+            tags=dict(
+                type="list",
+                elements='dict',
+                options=dict(
+                    name={},
+                    value={}
+                )),
             type={},
         ),
         mutually_exclusive=[('hostnames', 'server_ids')],
         required_one_of=[('hostnames', 'server_ids')],
+        required_if=[('state', 'present', ['hostnames'])],
+        supports_check_mode=True
     )
 
     if not HAS_REQUESTS:
         module.fail_json(msg='requests is required for this module.')
+
+    if not module.params.get('client_id') or not module.params.get('client_secret'):
+        _fail_msg = ("if BMC_CLIENT_ID and BMC_CLIENT_SECRET are not in environment variables, "
+                     "the client_id and client_secret parameters are required")
+        module.fail_json(msg=_fail_msg)
 
     state = module.params['state']
 

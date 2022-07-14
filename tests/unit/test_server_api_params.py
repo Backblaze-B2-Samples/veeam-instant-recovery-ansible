@@ -8,11 +8,14 @@ from ansible_collections.phoenixnap.bmc.plugins.modules.server import get_api_pa
 class TestApiParams(TestCase):
     def test_api_params_for_state_absent(self):
         expected_output = {
-            'method': 'DELETE',
-            'endpoint': 'https://api.phoenixnap.com/bmc/v1/servers/some_server_id',
-            'data': 'null'
+            'method': 'POST',
+            'endpoint': 'https://api.phoenixnap.com/bmc/v1/servers/some_server_id/actions/deprovision',
+            'data': json.dumps(
+                {
+                    'deleteIpBlocks': True
+                }, sort_keys=True)
         }
-        self.assertDictEqual(get_api_params(None, 'some_server_id', 'absent'), expected_output)
+        self.assertDictEqual(get_api_params(PseudoModule(), 'some_server_id', 'absent'), expected_output)
 
     def test_api_params_for_state_powered_on(self):
         expected_output = {
@@ -53,7 +56,7 @@ class TestApiParams(TestCase):
             'data': json.dumps(
                 {
                     'installDefaultSshKeys': True,
-                    'sshKeys': ['xxx'],
+                    'sshKeys': 'xxx',
                     'sshKeyIds': '123',
                     'osConfiguration': {
                         'windows': {
@@ -63,15 +66,56 @@ class TestApiParams(TestCase):
                             'managementAccessAllowedIps': '1.1.1.1'
                         }
                     }
-                })
+                }, sort_keys=True)
         }
         self.assertDictEqual(get_api_params(PseudoModule(), 'some_server_id', 'reset'), expected_output)
+
+    def test_api_params_for_state_present(self):
+        expected_output = {
+            'method': 'POST',
+            'endpoint': 'https://api.phoenixnap.com/bmc/v1/servers/',
+            'data': json.dumps({
+                'description': 'some description',
+                'location': 'PHX',
+                'hostname': 'my-server-red',
+                'installDefaultSshKeys': True,
+                'sshKeys': 'xxx',
+                'sshKeyIds': '123',
+                'networkType': 'PUBLIC_AND_PRIVATE',
+                'os': 'ubuntu/bionic',
+                'reservationId': '1',
+                'pricingModel': 'HOURLY',
+                'type': 's1.c1.small',
+                'osConfiguration': {
+                    'windows': {
+                        'rdpAllowedIps': '1.1.1.1'
+                    },
+                    'managementAccessAllowedIps': '1.1.1.1'
+                },
+                'networkConfiguration': {
+                    'gatewayAddress': '182.16.0.145',
+                    'privateNetworkConfiguration': {
+                        'configurationType': 'USE_OR_CREATE_DEFAULT'
+                    },
+                    'ipBlocksConfiguration': {
+                        'configurationType': 'USER_DEFINED',
+                        'ipBlocks': [
+                            {
+                                'id': '11111'
+                            }
+                        ]
+                    }
+                }
+            }, sort_keys=True)
+        }
+        self.assertDictEqual(get_api_params(PseudoModule(), 'my-server-red', 'present'), expected_output)
 
 
 class PseudoModule:
     params = {
         'description': 'some description',
         'location': 'PHX',
+        'gateway_address': '182.16.0.145',
         'hostname': 'my-server-red',
         'install_default_sshkeys': True,
         'ssh_key': 'xxx',
@@ -82,5 +126,12 @@ class PseudoModule:
         'pricing_model': 'HOURLY',
         'type': 's1.c1.small',
         'rdp_allowed_ips': '1.1.1.1',
-        'management_access_allowed_ips': '1.1.1.1'
+        'management_access_allowed_ips': '1.1.1.1',
+        'private_network_configuration_type': 'USE_OR_CREATE_DEFAULT',
+        'private_networks': [],
+        'tags': [],
+        'ip_block_configuration_type': 'USER_DEFINED',
+        'ip_block': '11111',
+        'delete_ip_blocks': True,
+        'public_networks': [],
     }
